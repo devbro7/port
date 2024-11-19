@@ -143,6 +143,28 @@ manual_service() {
     esac
 }
 
+# Improved Help Command
+help_cmd() {
+    echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
+    echo
+    echo -e "${yellow}Usage:${reset}"
+    echo "  port add <http|tcp> <local_port>        Add a new HTTP or TCP port forwarding"
+    echo "  port remove <local_port>                Remove an existing port forwarding"
+    echo "  port refresh                            Restart all active tunnels"
+    echo "  port list                               List all active port mappings"
+    echo "  port service {start|stop|restart|status} Manage the service manually"
+    echo "  port help                               Display this help message"
+    echo
+    echo -e "${yellow}Examples:${reset}"
+    echo "  port add http 80                        Add an HTTP tunnel for local port 80"
+    echo "  port add tcp 25565                      Add a TCP tunnel for local port 25565"
+    echo "  port remove 80                          Remove the tunnel for local port 80"
+    echo "  port list                               View active tunnels"
+    echo "  port refresh                            Restart all tunnels after a reboot"
+    echo
+    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
+}
+
 # Main Command Handler
 case "$1" in
     add)
@@ -161,27 +183,10 @@ case "$1" in
         manual_service "$2"
         ;;
     help)
-        echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
-        echo
-        echo -e "${yellow}Usage:${reset}"
-        echo -e "  $0 add <http|tcp> <local_port>            Add a new HTTP or TCP port forwarding"
-        echo -e "  $0 remove <local_port>                    Remove an existing port forwarding"
-        echo -e "  $0 refresh                                Restart all active tunnels"
-        echo -e "  $0 list                                   List all active port mappings"
-        echo -e "  $0 service {start|stop|restart|status}    Manage the service manually"
-        echo -e "  $0 help                                   Display this help message"
-        echo
-        echo -e "${yellow}Examples:${reset}"
-        echo -e "  $0 add http 80                            Add an HTTP tunnel for local port 80"
-        echo -e "  $0 add tcp 25565                          Add a TCP tunnel for local port 25565"
-        echo -e "  $0 remove 80                              Remove the tunnel for local port 80"
-        echo -e "  $0 list                                   View active tunnels"
-        echo -e "  $0 refresh                                Restart all tunnels after a reboot"
-        echo
-        echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
+        help_cmd
         ;;
     *)
-        echo -e "${red}Invalid command. Use '$0 help' for usage.${reset}"
+        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
         exit 1
         ;;
 esac
