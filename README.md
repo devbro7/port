@@ -25,7 +25,7 @@ Installation
 
 
 ```sh
- bash <(curl -s https://tinyurl.com/ssh-port-forward)
+ bash <(curl -sL https://tinyurl.com/ssh-port-forward)
 ```
 simply run above code
 
