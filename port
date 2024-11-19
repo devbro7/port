@@ -1,7 +1,9 @@
 #!/bin/bash
+
 trap 'kill ${tunnel_pid:-} ${http_pid:-} ${tcp_pid:-} ${ssh_pid:-} ${req_pid:-} 2>/dev/null; exit' SIGINT SIGTERM
 
-PORTS_FILE="/ports.info.txt"
+PORTS_FILE="/root/ports.info.txt"
+LOG_FILE="/var/log/port.log"
 
 # Colors for better visibility
 red="\033[0;31m"
@@ -22,46 +24,52 @@ serveo_status() {
 
 # Port Management Functions
 add_port() {
-    local type=$1
+    local protocol=$1
     local local_port=$2
-    if [[ -z "$type" || -z "$local_port" ]]; then
+
+    if [[ -z "$local_port" || -z "$protocol" ]]; then
         echo -e "${red}Please provide both type (http/tcp) and local port.${reset}"
         exit 1
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
 
-    if [[ "$type" == "http" ]]; then
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null &
-    elif [[ "$type" == "tcp" ]]; then
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null &
-    else
-        echo -e "${red}Invalid type. Use 'http' or 'tcp'.${reset}"
-        exit 1
+    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
+    if [[ "$protocol" == "http" ]]; then
+        ssh_command+=" -R 80:localhost:${local_port}"
     fi
 
+    eval $ssh_command > /dev/null 2>&1 &
     ssh_pid=$!
-    echo "${type}:${random_port}:${local_port}" >> $PORTS_FILE
-    echo -e "${green}${type^} ${local_port} is now on serveo.net:${random_port}${reset}"
+
+    echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
+    echo -e "${green}${protocol^} ${local_port} is now on serveo.net:${random_port}${reset}"
 }
 
 remove_port() {
     local local_port=$1
+
     if [[ -z "$local_port" ]]; then
         echo -e "${red}Please provide a local port to remove.${reset}"
         exit 1
     fi
 
-    local line=$(grep ":${local_port}$" $PORTS_FILE)
-    local random_port=$(echo "$line" | cut -d':' -f2)
+    local port_info
+    port_info=$(grep ":${local_port}:" $PORTS_FILE)
 
-    if [[ -z "$random_port" ]]; then
+    if [[ -z "$port_info" ]]; then
         echo -e "${red}Port ${local_port} not found.${reset}"
         exit 1
     fi
 
-    pkill -f "ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net" > /dev/null
-    sed -i "/${line}/d" $PORTS_FILE
+    local random_port
+    random_port=$(echo $port_info | cut -d':' -f1)
+    local ssh_pid
+    ssh_pid=$(echo $port_info | cut -d':' -f3)
+
+    kill "$ssh_pid" > /dev/null 2>&1
+    sed -i "/${port_info}/d" $PORTS_FILE
+
     echo -e "${green}Port ${local_port} has been removed.${reset}"
 }
 
@@ -72,11 +80,10 @@ refresh_ports() {
     fi
 
     while IFS= read -r line; do
-        local type=$(echo $line | cut -d':' -f1)
-        local random_port=$(echo $line | cut -d':' -f2)
-        local local_port=$(echo $line | cut -d':' -f3)
+        random_port=$(echo $line | cut -d':' -f1)
+        local_port=$(echo $line | cut -d':' -f2)
 
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null &
+        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null 2>&1 &
     done < $PORTS_FILE
 
     echo -e "${green}Ports have been successfully refreshed.${reset}"
@@ -90,51 +97,54 @@ list_ports() {
 
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
-        local type=$(echo $line | cut -d':' -f1)
-        local random_port=$(echo $line | cut -d':' -f2)
-        local local_port=$(echo $line | cut -d':' -f3)
-        echo -e "${type^} Local port ${local_port} -> Public port ${random_port} (serveo.net)"
+        random_port=$(echo $line | cut -d':' -f1)
+        local_port=$(echo $line | cut -d':' -f2)
+        echo -e "${green}Local port ${local_port} -> Public port ${random_port}${reset}"
     done < $PORTS_FILE
 }
 
-# Help Command
-help_cmd() {
-    echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
-    echo
-    echo -e "${yellow}Usage:${reset}"
-    echo -e "  port add <http|tcp> <local_port>            Add a new HTTP or TCP port forwarding"
-    echo -e "  port remove <local_port>                    Remove an existing port forwarding"
-    echo -e "  port refresh                                Restart all active tunnels"
-    echo -e "  port list                                   List all active port mappings"
-    echo -e "  port help                                   Display this help message"
-    echo
-    echo -e "${yellow}Examples:${reset}"
-    echo -e "  port add http 80                            Add an HTTP tunnel for local port 80"
-    echo -e "  port add tcp 25565                          Add a TCP tunnel for local port 25565"
-    echo -e "  port remove 80                              Remove the tunnel for local port 80"
-    echo -e "  port list                                   View active tunnels"
-    echo -e "  port refresh                                Restart all tunnels after a reboot"
-    echo
-    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
+manual_service() {
+    case "$1" in
+        start)
+            echo "Starting port management tool..."
+            nohup $0 refresh > $LOG_FILE 2>&1 &
+            echo $! > /var/run/port.pid
+            echo "Service started."
+            ;;
+        stop)
+            if [[ -f /var/run/port.pid ]]; then
+                kill "$(cat /var/run/port.pid)" > /dev/null 2>&1
+                rm -f /var/run/port.pid
+                echo "Service stopped."
+            else
+                echo "Service is not running."
+            fi
+            ;;
+        restart)
+            $0 stop
+            sleep 1
+            $0 start
+            ;;
+        status)
+            if [[ -f /var/run/port.pid ]]; then
+                if ps -p "$(cat /var/run/port.pid)" > /dev/null; then
+                    echo "Service is running (PID: $(cat /var/run/port.pid))."
+                else
+                    echo "Service is not running, but PID file exists."
+                fi
+            else
+                echo "Service is not running."
+            fi
+            ;;
+        *)
+            echo "Usage: $0 service {start|stop|restart|status}"
+            exit 1
+            ;;
+    esac
 }
 
 # Main Command Handler
 case "$1" in
-    http)
-        host=${2:-localhost}
-        [ -z "$3" ] && { echo -e "${red}Local port not specified.${reset}"; exit 1; }
-        http "$@"
-        ;;
-    tcp)
-        host=${2:-localhost}
-        [ -z "$3" ] && { echo -e "${red}Local port not specified.${reset}"; exit 1; }
-        tcp "$@"
-        ;;
-    ssh)
-        host=${2:-localhost}
-        [ -z "$3" ] && { echo -e "${red}Public hostname alias not specified.${reset}"; exit 1; }
-        ssh_opt "$@"
-        ;;
     add)
         add_port "$2" "$3"
         ;;
@@ -147,8 +157,28 @@ case "$1" in
     list)
         list_ports
         ;;
+    service)
+        manual_service "$2"
+        ;;
     help)
-        help_cmd
+        echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
+        echo
+        echo -e "${yellow}Usage:${reset}"
+        echo -e "  $0 add <http|tcp> <local_port>            Add a new HTTP or TCP port forwarding"
+        echo -e "  $0 remove <local_port>                    Remove an existing port forwarding"
+        echo -e "  $0 refresh                                Restart all active tunnels"
+        echo -e "  $0 list                                   List all active port mappings"
+        echo -e "  $0 service {start|stop|restart|status}    Manage the service manually"
+        echo -e "  $0 help                                   Display this help message"
+        echo
+        echo -e "${yellow}Examples:${reset}"
+        echo -e "  $0 add http 80                            Add an HTTP tunnel for local port 80"
+        echo -e "  $0 add tcp 25565                          Add a TCP tunnel for local port 25565"
+        echo -e "  $0 remove 80                              Remove the tunnel for local port 80"
+        echo -e "  $0 list                                   View active tunnels"
+        echo -e "  $0 refresh                                Restart all tunnels after a reboot"
+        echo
+        echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
         ;;
     *)
         echo -e "${red}Invalid command. Use '$0 help' for usage.${reset}"
