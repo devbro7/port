@@ -81,9 +81,9 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(dig +short serveo.net | head -n 1)
+    local serveo_ip=$(nslookup serveo.net 8.8.8.8 | awk '/^Address: / { print $2; exit }') # Resolve Serveo's IP address
 
-    local ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
+    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
         ssh_command+=" -R 80:localhost:${local_port}"
     fi
@@ -91,7 +91,7 @@ add_port() {
     eval $ssh_command > /dev/null 2>&1 &
     ssh_pid=$!
 
-    echo "${random_port}:${local_port}:${ssh_pid}" >> "$PORTS_FILE"
+    echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
     echo -e "${green}${protocol^} ${local_port} is now available at:"
     echo -e "  - Domain: serveo.net:${random_port}"
     echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
@@ -220,6 +220,15 @@ help_cmd() {
     echo "  port list                               List all active port mappings"
     echo "  port service {start|stop|restart|status} Manage the service manually"
     echo "  port help                               Display this help message"
+    echo
+    echo -e "${yellow}Examples:${reset}"
+    echo "  port add http 80                        Add an HTTP tunnel for local port 80"
+    echo "  port add tcp 25565                      Add a TCP tunnel for local port 25565"
+    echo "  port remove 80                          Remove the tunnel for local port 80"
+    echo "  port list                               View active tunnels"
+    echo "  port refresh                            Restart all tunnels after a reboot"
+    echo
+    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
 }
 
 # Main Command Handler
