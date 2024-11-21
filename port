@@ -49,7 +49,7 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
+    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
 
     ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
