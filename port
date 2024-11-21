@@ -149,7 +149,15 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(dig +short serveo.net | head -n 1)
+    # Resolve Serveo's IP using nslookup
+    local serveo_ip
+    serveo_ip=$(nslookup serveo.net | awk '/^Address: / { print $2; exit }')
+
+    if [[ -z "$serveo_ip" ]]; then
+        serveo_ip="serveo.net (IP unavailable)"
+        echo -e "${yellow}Warning: Unable to resolve Serveo.net. Using hostname.${reset}"
+    fi
+
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo "$line" | cut -d':' -f1)
