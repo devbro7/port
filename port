@@ -18,28 +18,33 @@ flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; 
 
 # Install dependencies if missing
 install_dependencies() {
-    local packages=(ssh curl grep sed dnsutils) # dnsutils includes dig and nslookup
+    local dependencies=("ssh" "curl" "grep" "sed" "touch")
     local missing=()
 
-    for pkg in "${packages[@]}"; do
-        if ! command -v $pkg &> /dev/null; then
-            missing+=($pkg)
+    # Check for missing dependencies
+    for cmd in "${dependencies[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing+=("$cmd")
         fi
     done
 
+    # Install only if there are missing dependencies
     if [ ${#missing[@]} -gt 0 ]; then
         echo -e "${yellow}Missing dependencies: ${missing[*]}. Installing...${reset}"
-        if command -v apt-get &> /dev/null; then
+        
+        if [[ -n "$(command -v apt-get)" ]]; then
             sudo apt-get update
             sudo apt-get install -y "${missing[@]}"
-        elif command -v yum &> /dev/null; then
+        elif [[ -n "$(command -v yum)" ]]; then
             sudo yum install -y "${missing[@]}"
-        elif command -v pacman &> /dev/null; then
+        elif [[ -n "$(command -v pacman)" ]]; then
             sudo pacman -S --noconfirm "${missing[@]}"
         else
-            echo -e "${red}Unable to install dependencies automatically. Install manually.${reset}"
+            echo -e "${red}Unable to install dependencies. Please install them manually.${reset}"
             exit 1
         fi
+    else
+        echo -e "${green}All dependencies are already installed.${reset}"
     fi
 }
 
