@@ -12,23 +12,35 @@ green="\033[0;32m"
 yellow="\033[0;33m"
 reset="\033[0m"
 
+# Ensure only one instance of the script runs
+exec 200>$LOCK_FILE
+flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
+
 # Install missing dependencies if not already installed
 install_dependencies() {
-    for cmd in ssh curl grep sed touch dnsutils; do
-        command -v $cmd > /dev/null || {
-            echo -e "${yellow}$cmd is missing. Installing...${reset}"
-            if [[ -n "$(command -v apt-get)" ]]; then
-                sudo apt-get update && sudo apt-get install -y $cmd
-            elif [[ -n "$(command -v yum)" ]]; then
-                sudo yum install -y $cmd
-            elif [[ -n "$(command -v pacman)" ]]; then
-                sudo pacman -S --noconfirm $cmd
-            else
-                echo -e "${red}Error: Unable to install $cmd. Please install it manually.${reset}"
-                exit 1
-            fi
-        }
+    local missing=()
+    for cmd in ssh curl grep sed touch nslookup; do
+        if ! command -v $cmd &> /dev/null; then
+            missing+=($cmd)
+        fi
     done
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${yellow}Missing dependencies: ${missing[@]}. Installing...${reset}"
+
+        # Install dependencies using the system's package manager
+        if [[ -n "$(command -v apt-get)" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y ${missing[@]}
+        elif [[ -n "$(command -v yum)" ]]; then
+            sudo yum install -y ${missing[@]}
+        elif [[ -n "$(command -v pacman)" ]]; then
+            sudo pacman -S --noconfirm ${missing[@]}
+        else
+            echo -e "${red}Unable to install dependencies. Please install them manually.${reset}"
+            exit 1
+        fi
+    fi
 }
 
 # Utility Functions
@@ -205,10 +217,6 @@ help_cmd() {
 # Main Command Handler
 check_dependencies
 
-# Ensure only one instance runs at a time
-exec 200>$LOCK_FILE
-flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
-
 case "$1" in
     add)
         add_port "$2" "$3"
@@ -228,8 +236,3 @@ case "$1" in
     help)
         help_cmd
         ;;
-    *)
-        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
-        exit 1
-        ;;
-esac
