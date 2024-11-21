@@ -1,13 +1,12 @@
 #!/bin/bash
 
-# Trap signals to ensure cleanup
 trap 'kill ${tunnel_pid:-} ${http_pid:-} ${tcp_pid:-} ${ssh_pid:-} ${req_pid:-} 2>/dev/null; exit' SIGINT SIGTERM
 
 PORTS_FILE="/root/ports.info.txt"
 LOG_FILE="/var/log/port.log"
 LOCK_FILE="/var/lock/port.lock"
 
-# Colors for visibility
+# Colors for better visibility
 red="\033[0;31m"
 green="\033[0;32m"
 yellow="\033[0;33m"
@@ -17,57 +16,55 @@ reset="\033[0m"
 exec 200>$LOCK_FILE
 flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
 
-# Install dependencies
+# Install dependencies if missing
 install_dependencies() {
+    local packages=(ssh curl grep sed dnsutils) # dnsutils includes dig and nslookup
     local missing=()
-    for cmd in ssh curl grep sed touch dig; do
-        if ! command -v "$cmd" &> /dev/null; then
-            missing+=($cmd)
+
+    for pkg in "${packages[@]}"; do
+        if ! command -v $pkg &> /dev/null; then
+            missing+=($pkg)
         fi
     done
 
     if [ ${#missing[@]} -gt 0 ]; then
         echo -e "${yellow}Missing dependencies: ${missing[*]}. Installing...${reset}"
-
-        # Install dependencies using the appropriate package manager
-        if [[ -n "$(command -v apt-get)" ]]; then
+        if command -v apt-get &> /dev/null; then
             sudo apt-get update
-            sudo apt-get install -y ssh curl grep sed coreutils dnsutils
-        elif [[ -n "$(command -v yum)" ]]; then
-            sudo yum install -y openssh-clients curl grep sed coreutils bind-utils
-        elif [[ -n "$(command -v pacman)" ]]; then
-            sudo pacman -S --noconfirm openssh curl grep sed coreutils bind
+            sudo apt-get install -y "${missing[@]}"
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y "${missing[@]}"
+        elif command -v pacman &> /dev/null; then
+            sudo pacman -S --noconfirm "${missing[@]}"
         else
-            echo -e "${red}Unsupported package manager. Please install the missing dependencies manually.${reset}"
+            echo -e "${red}Unable to install dependencies automatically. Install manually.${reset}"
             exit 1
         fi
     fi
 }
 
-# Utility Functions
+# Validate input port
+validate_input() {
+    local port=$1
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+        echo -e "${red}Invalid port number. Provide a port between 1 and 65535.${reset}"
+        exit 1
+    fi
+}
+
+# Network check
 network() {
     ping -c 4 -W 1 google.com > /dev/null 2>&1
     return $?
 }
 
+# Serveo status check
 serveo_status() {
     curl -s --head https://serveo.net/ | head -n 1 | grep -q "200 OK"
     return $?
 }
 
-check_dependencies() {
-    install_dependencies
-}
-
-# Port Management Functions
-validate_input() {
-    local port=$1
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
-        echo -e "${red}Invalid port number. Please provide a port between 1 and 65535.${reset}"
-        exit 1
-    fi
-}
-
+# Add a new port forwarding
 add_port() {
     local protocol=$1
     local local_port=$2
@@ -79,19 +76,23 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(dig +short serveo.net | tail -n 1)
+    local serveo_ip=$(dig +short serveo.net | head -n 1)
 
-    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
-    [[ "$protocol" == "http" ]] && ssh_command+=" -R 80:localhost:${local_port}"
+    local ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
+    if [[ "$protocol" == "http" ]]; then
+        ssh_command+=" -R 80:localhost:${local_port}"
+    fi
 
     eval $ssh_command > /dev/null 2>&1 &
     ssh_pid=$!
 
-    echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
+    echo "${random_port}:${local_port}:${ssh_pid}" >> "$PORTS_FILE"
     echo -e "${green}${protocol^} ${local_port} is now available at:"
+    echo -e "  - Domain: serveo.net:${random_port}"
     echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
 }
 
+# Remove an existing port forwarding
 remove_port() {
     local local_port=$1
 
@@ -119,6 +120,7 @@ remove_port() {
     echo -e "${green}Port ${local_port} has been removed.${reset}"
 }
 
+# Refresh all port forwards
 refresh_ports() {
     if [[ ! -f "$PORTS_FILE" ]]; then
         echo -e "${yellow}No ports to refresh.${reset}"
@@ -126,38 +128,39 @@ refresh_ports() {
     fi
 
     while IFS= read -r line; do
-        local random_port local_port
         random_port=$(echo "$line" | cut -d':' -f1)
         local_port=$(echo "$line" | cut -d':' -f2)
 
-        ssh -o StrictHostKeyChecking=no -f -N -R "${random_port}:localhost:${local_port}" serveo.net > /dev/null 2>&1 &
+        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null 2>&1 &
     done < "$PORTS_FILE"
 
     echo -e "${green}Ports have been successfully refreshed.${reset}"
 }
 
+# List active port forwards
 list_ports() {
     if [[ ! -f "$PORTS_FILE" ]]; then
         echo -e "${yellow}No ports to list.${reset}"
         exit 1
     fi
 
-    local serveo_ip=$(dig +short serveo.net | tail -n 1)
+    local serveo_ip=$(dig +short serveo.net | head -n 1)
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
-        local random_port local_port
         random_port=$(echo "$line" | cut -d':' -f1)
         local_port=$(echo "$line" | cut -d':' -f2)
         echo -e "${green}Local port ${local_port} ->"
+        echo -e "  - Domain: serveo.net:${random_port}"
         echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
     done < "$PORTS_FILE"
 }
 
+# Manage the service manually
 manual_service() {
     case "$1" in
         start)
             echo "Starting port management tool..."
-            nohup "$0" refresh > "$LOG_FILE" 2>&1 &
+            nohup $0 refresh > "$LOG_FILE" 2>&1 &
             echo $! > /var/run/port.pid
             echo "Service started."
             ;;
@@ -193,6 +196,7 @@ manual_service() {
     esac
 }
 
+# Display help information
 help_cmd() {
     echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
     echo
@@ -203,11 +207,10 @@ help_cmd() {
     echo "  port list                               List all active port mappings"
     echo "  port service {start|stop|restart|status} Manage the service manually"
     echo "  port help                               Display this help message"
-    echo
 }
 
 # Main Command Handler
-check_dependencies
+install_dependencies
 
 case "$1" in
     add)
@@ -229,7 +232,10 @@ case "$1" in
         help_cmd
         ;;
     *)
-        echo -e "${red}Invalid command. Use 'help' for usage instructions.${reset}"
+        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
         exit 1
         ;;
 esac
+
+# Release the lock before exiting
+flock -u 200
