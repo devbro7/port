@@ -13,8 +13,8 @@ yellow="\033[0;33m"
 reset="\033[0m"
 
 # Utility Functions
-network_check() {
-    ping -c 4 -W 1 google.com >/dev/null 2>&1
+network() {
+    ping -c 4 -W 1 google.com > /dev/null 2>&1
     return $?
 }
 
@@ -24,15 +24,15 @@ serveo_status() {
 }
 
 check_dependencies() {
-    for cmd in ssh curl grep sed dig shuf; do
-        command -v $cmd >/dev/null || { echo -e "${red}Error: $cmd is required but not installed.${reset}"; exit 1; }
+    for cmd in ssh curl grep sed touch; do
+        command -v $cmd > /dev/null || { echo -e "${red}Error: $cmd is required but not installed.${reset}"; exit 1; }
     done
 }
 
 # Port Management Functions
 validate_input() {
     local port=$1
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
         echo -e "${red}Invalid port number. Please provide a port between 1 and 65535.${reset}"
         exit 1
     fi
@@ -51,18 +51,16 @@ add_port() {
     local random_port=$(shuf -i 1024-65535 -n 1)
     local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
 
-    ssh_command="ssh -o StrictHostKeyChecking=no -f -N"
+    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
         ssh_command+=" -R 80:localhost:${local_port}"
     fi
-    ssh_command+=" -R ${random_port}:localhost:${local_port} serveo.net"
 
-    eval $ssh_command >/dev/null 2>&1 &
+    eval $ssh_command > /dev/null 2>&1 &
     ssh_pid=$!
 
-    echo "${random_port}:${local_port}:${ssh_pid}" >>$PORTS_FILE
+    echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
     echo -e "${green}${protocol^} ${local_port} is now available at:"
-    echo -e "  - Domain: serveo.net:${random_port}"
     echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
 }
 
@@ -87,7 +85,7 @@ remove_port() {
     local ssh_pid
     ssh_pid=$(echo $port_info | cut -d':' -f3)
 
-    kill "$ssh_pid" >/dev/null 2>&1
+    kill "$ssh_pid" > /dev/null 2>&1
     sed -i "/${port_info}/d" $PORTS_FILE
 
     echo -e "${green}Port ${local_port} has been removed.${reset}"
@@ -103,8 +101,8 @@ refresh_ports() {
         random_port=$(echo $line | cut -d':' -f1)
         local_port=$(echo $line | cut -d':' -f2)
 
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net >/dev/null 2>&1 &
-    done <$PORTS_FILE
+        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null 2>&1 &
+    done < $PORTS_FILE
 
     echo -e "${green}Ports have been successfully refreshed.${reset}"
 }
@@ -121,52 +119,51 @@ list_ports() {
         random_port=$(echo $line | cut -d':' -f1)
         local_port=$(echo $line | cut -d':' -f2)
         echo -e "${green}Local port ${local_port} ->"
-        echo -e "  - Domain: serveo.net:${random_port}"
         echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
-    done <$PORTS_FILE
+    done < $PORTS_FILE
 }
 
-service_management() {
+manual_service() {
     case "$1" in
-    start)
-        echo "Starting port management tool..."
-        nohup $0 refresh >$LOG_FILE 2>&1 &
-        echo $! >/var/run/port.pid
-        echo "Service started."
-        ;;
-    stop)
-        if [[ -f /var/run/port.pid ]]; then
-            kill "$(cat /var/run/port.pid)" >/dev/null 2>&1
-            rm -f /var/run/port.pid
-            echo "Service stopped."
-        else
-            echo "Service is not running."
-        fi
-        ;;
-    restart)
-        $0 stop
-        sleep 1
-        $0 start
-        ;;
-    status)
-        if [[ -f /var/run/port.pid ]]; then
-            if ps -p "$(cat /var/run/port.pid)" >/dev/null; then
-                echo "Service is running (PID: $(cat /var/run/port.pid))."
+        start)
+            echo "Starting port management tool..."
+            nohup $0 refresh > $LOG_FILE 2>&1 &
+            echo $! > /var/run/port.pid
+            echo "Service started."
+            ;;
+        stop)
+            if [[ -f /var/run/port.pid ]]; then
+                kill "$(cat /var/run/port.pid)" > /dev/null 2>&1
+                rm -f /var/run/port.pid
+                echo "Service stopped."
             else
-                echo "Service is not running, but PID file exists."
+                echo "Service is not running."
             fi
-        else
-            echo "Service is not running."
-        fi
-        ;;
-    *)
-        echo "Usage: $0 service {start|stop|restart|status}"
-        exit 1
-        ;;
+            ;;
+        restart)
+            $0 stop
+            sleep 1
+            $0 start
+            ;;
+        status)
+            if [[ -f /var/run/port.pid ]]; then
+                if ps -p "$(cat /var/run/port.pid)" > /dev/null; then
+                    echo "Service is running (PID: $(cat /var/run/port.pid))."
+                else
+                    echo "Service is not running, but PID file exists."
+                fi
+            else
+                echo "Service is not running."
+            fi
+            ;;
+        *)
+            echo "Usage: $0 service {start|stop|restart|status}"
+            exit 1
+            ;;
     esac
 }
 
-# Help Command
+# Improved Help Command
 help_cmd() {
     echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
     echo
@@ -184,6 +181,8 @@ help_cmd() {
     echo "  port remove 80                          Remove the tunnel for local port 80"
     echo "  port list                               View active tunnels"
     echo "  port refresh                            Restart all tunnels after a reboot"
+    echo
+    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
 }
 
 # Main Command Handler
@@ -194,26 +193,26 @@ exec 200>$LOCK_FILE
 flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
 
 case "$1" in
-add)
-    add_port "$2" "$3"
-    ;;
-remove)
-    remove_port "$2"
-    ;;
-refresh)
-    refresh_ports
-    ;;
-list)
-    list_ports
-    ;;
-service)
-    service_management "$2"
-    ;;
-help)
-    help_cmd
-    ;;
-*)
-    echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
-    exit 1
-    ;;
+    add)
+        add_port "$2" "$3"
+        ;;
+    remove)
+        remove_port "$2"
+        ;;
+    refresh)
+        refresh_ports
+        ;;
+    list)
+        list_ports
+        ;;
+    service)
+        manual_service "$2"
+        ;;
+    help)
+        help_cmd
+        ;;
+    *)
+        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
+        exit 1
+        ;;
 esac
