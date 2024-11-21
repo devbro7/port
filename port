@@ -14,11 +14,11 @@ reset="\033[0m"
 
 # Install missing dependencies if not already installed
 install_dependencies() {
-    for cmd in ssh curl grep sed touch dig getent; do
+    for cmd in ssh curl grep sed touch dnsutils; do
         command -v $cmd > /dev/null || {
             echo -e "${yellow}$cmd is missing. Installing...${reset}"
             if [[ -n "$(command -v apt-get)" ]]; then
-                sudo apt-get install -y $cmd
+                sudo apt-get update && sudo apt-get install -y $cmd
             elif [[ -n "$(command -v yum)" ]]; then
                 sudo yum install -y $cmd
             elif [[ -n "$(command -v pacman)" ]]; then
@@ -40,20 +40,6 @@ network() {
 serveo_status() {
     curl -s --head https://serveo.net/ | head -n 1 | grep -q "200 OK"
     return $?
-}
-
-resolve_serveo_ip() {
-    # Try nslookup, dig or getent as fallback options for domain resolution
-    if command -v nslookup > /dev/null; then
-        nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}'
-    elif command -v dig > /dev/null; then
-        dig +short serveo.net | head -n 1
-    elif command -v getent > /dev/null; then
-        getent hosts serveo.net | awk '{print $1}'
-    else
-        echo -e "${red}Unable to resolve domain. Please ensure 'nslookup', 'dig', or 'getent' is installed.${reset}"
-        exit 1
-    fi
 }
 
 check_dependencies() {
@@ -80,7 +66,7 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(resolve_serveo_ip) # Use the function to resolve Serveo's IP address
+    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
 
     ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
@@ -144,7 +130,7 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(resolve_serveo_ip) # Use the function to resolve Serveo's IP address
+    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
@@ -219,4 +205,31 @@ help_cmd() {
 # Main Command Handler
 check_dependencies
 
-# Ensure only one instance runs at
+# Ensure only one instance runs at a time
+exec 200>$LOCK_FILE
+flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
+
+case "$1" in
+    add)
+        add_port "$2" "$3"
+        ;;
+    remove)
+        remove_port "$2"
+        ;;
+    refresh)
+        refresh_ports
+        ;;
+    list)
+        list_ports
+        ;;
+    service)
+        manual_service "$2"
+        ;;
+    help)
+        help_cmd
+        ;;
+    *)
+        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
+        exit 1
+        ;;
+esac
