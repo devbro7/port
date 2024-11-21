@@ -49,6 +49,7 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
+    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
 
     ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
@@ -59,7 +60,9 @@ add_port() {
     ssh_pid=$!
 
     echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
-    echo -e "${green}${protocol^} ${local_port} is now on serveo.net:${random_port}${reset}"
+    echo -e "${green}${protocol^} ${local_port} is now available at:"
+    echo -e "  - Domain: serveo.net:${random_port}"
+    echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
 }
 
 remove_port() {
@@ -111,11 +114,14 @@ list_ports() {
         exit 1
     fi
 
+    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
         local_port=$(echo $line | cut -d':' -f2)
-        echo -e "${green}Local port ${local_port} -> Public port ${random_port}${reset}"
+        echo -e "${green}Local port ${local_port} ->"
+        echo -e "  - Domain: serveo.net:${random_port}"
+        echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
     done < $PORTS_FILE
 }
 
