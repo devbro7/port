@@ -12,6 +12,25 @@ green="\033[0;32m"
 yellow="\033[0;33m"
 reset="\033[0m"
 
+# Install missing dependencies if not already installed
+install_dependencies() {
+    for cmd in ssh curl grep sed touch dig getent; do
+        command -v $cmd > /dev/null || {
+            echo -e "${yellow}$cmd is missing. Installing...${reset}"
+            if [[ -n "$(command -v apt-get)" ]]; then
+                sudo apt-get install -y $cmd
+            elif [[ -n "$(command -v yum)" ]]; then
+                sudo yum install -y $cmd
+            elif [[ -n "$(command -v pacman)" ]]; then
+                sudo pacman -S --noconfirm $cmd
+            else
+                echo -e "${red}Error: Unable to install $cmd. Please install it manually.${reset}"
+                exit 1
+            fi
+        }
+    done
+}
+
 # Utility Functions
 network() {
     ping -c 4 -W 1 google.com > /dev/null 2>&1
@@ -23,33 +42,22 @@ serveo_status() {
     return $?
 }
 
-check_dependencies() {
-    # List of required commands
-    local required_cmds=("ssh" "curl" "grep" "sed" "touch" "nslookup")
-    
-    for cmd in "${required_cmds[@]}"; do
-        command -v $cmd > /dev/null || { 
-            echo -e "${red}Error: $cmd is required but not installed.${reset}"
-            install_dependencies "$cmd"
-        }
-    done
-}
-
-# Install missing dependencies
-install_dependencies() {
-    local cmd=$1
-    echo -e "${yellow}Attempting to install $cmd...${reset}"
-
-    if command -v apt-get > /dev/null; then
-        sudo apt-get install -y $cmd
-    elif command -v yum > /dev/null; then
-        sudo yum install -y $cmd
-    elif command -v pacman > /dev/null; then
-        sudo pacman -S --noconfirm $cmd
+resolve_serveo_ip() {
+    # Try nslookup, dig or getent as fallback options for domain resolution
+    if command -v nslookup > /dev/null; then
+        nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}'
+    elif command -v dig > /dev/null; then
+        dig +short serveo.net | head -n 1
+    elif command -v getent > /dev/null; then
+        getent hosts serveo.net | awk '{print $1}'
     else
-        echo -e "${red}Unsupported package manager. Please install $cmd manually.${reset}"
+        echo -e "${red}Unable to resolve domain. Please ensure 'nslookup', 'dig', or 'getent' is installed.${reset}"
         exit 1
     fi
+}
+
+check_dependencies() {
+    install_dependencies
 }
 
 # Port Management Functions
@@ -72,7 +80,7 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
+    local serveo_ip=$(resolve_serveo_ip) # Use the function to resolve Serveo's IP address
 
     ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
     if [[ "$protocol" == "http" ]]; then
@@ -136,7 +144,7 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
+    local serveo_ip=$(resolve_serveo_ip) # Use the function to resolve Serveo's IP address
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
@@ -211,31 +219,4 @@ help_cmd() {
 # Main Command Handler
 check_dependencies
 
-# Ensure only one instance runs at a time
-exec 200>$LOCK_FILE
-flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
-
-case "$1" in
-    add)
-        add_port "$2" "$3"
-        ;;
-    remove)
-        remove_port "$2"
-        ;;
-    refresh)
-        refresh_ports
-        ;;
-    list)
-        list_ports
-        ;;
-    service)
-        manual_service "$2"
-        ;;
-    help)
-        help_cmd
-        ;;
-    *)
-        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
-        exit 1
-        ;;
-esac
+# Ensure only one instance runs at
