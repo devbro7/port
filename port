@@ -24,7 +24,7 @@ serveo_status() {
 }
 
 check_dependencies() {
-    for cmd in ssh curl grep sed touch; do
+    for cmd in ssh curl grep sed touch jq qrencode; do
         command -v $cmd > /dev/null || { echo -e "${red}Error: $cmd is required but not installed.${reset}"; exit 1; }
     done
 }
@@ -41,6 +41,7 @@ validate_input() {
 add_port() {
     local protocol=$1
     local local_port=$2
+    local subdomain=$3
 
     validate_input "$local_port"
     if [[ "$protocol" != "http" && "$protocol" != "tcp" ]]; then
@@ -49,20 +50,37 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
+    local serveo_ip=$(dig +short serveo.net | head -n 1)
 
-    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
+    ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port}"
     if [[ "$protocol" == "http" ]]; then
         ssh_command+=" -R 80:localhost:${local_port}"
     fi
+    if [[ -n "$subdomain" ]]; then
+        ssh_command+=" -R ${subdomain}.serveo.net:80:localhost:${local_port}"
+    fi
 
-    eval $ssh_command > /dev/null 2>&1 &
+    eval $ssh_command serveo.net > /dev/null 2>&1 &
     ssh_pid=$!
 
-    echo "${random_port}:${local_port}:${ssh_pid}" >> $PORTS_FILE
+    # Save to ports file
+    echo "${random_port}:${local_port}:${ssh_pid}:${subdomain:-N/A}" >> $PORTS_FILE
     echo -e "${green}${protocol^} ${local_port} is now available at:"
-    echo -e "  - Domain: serveo.net:${random_port}"
+    if [[ -n "$subdomain" ]]; then
+        echo -e "  - Subdomain: ${subdomain}.serveo.net"
+    else
+        echo -e "  - Domain: serveo.net:${random_port}"
+    fi
     echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
+}
+
+generate_qr() {
+    local url=$1
+    if qrencode -o qr.png "$url"; then
+        echo -e "${green}QR code generated and saved as 'qr.png'${reset}"
+    else
+        echo -e "${red}Failed to generate QR code.${reset}"
+    fi
 }
 
 remove_port() {
@@ -101,8 +119,13 @@ refresh_ports() {
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
         local_port=$(echo $line | cut -d':' -f2)
+        subdomain=$(echo $line | cut -d':' -f4)
 
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null 2>&1 &
+        ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
+        if [[ "$subdomain" != "N/A" ]]; then
+            ssh_command+=" -R ${subdomain}.serveo.net:80:localhost:${local_port}"
+        fi
+        eval $ssh_command > /dev/null 2>&1 &
     done < $PORTS_FILE
 
     echo -e "${green}Ports have been successfully refreshed.${reset}"
@@ -114,13 +137,17 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
+    local serveo_ip=$(dig +short serveo.net | head -n 1)
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
         local_port=$(echo $line | cut -d':' -f2)
-        echo -e "${green}Local port ${local_port} ->"
-        echo -e "  - Domain: serveo.net:${random_port}"
+        subdomain=$(echo $line | cut -d':' -f4)
+        if [[ "$subdomain" != "N/A" ]]; then
+            echo -e "${green}Local port ${local_port} -> Subdomain: ${subdomain}.serveo.net"
+        else
+            echo -e "${green}Local port ${local_port} -> Domain: serveo.net:${random_port}"
+        fi
         echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
     done < $PORTS_FILE
 }
@@ -165,56 +192,30 @@ manual_service() {
     esac
 }
 
-# Improved Help Command
+update_script() {
+    echo "Updating the script from GitHub repository..."
+    git pull origin main || echo -e "${red}Failed to update script.${reset}"
+    echo -e "${green}Update complete.${reset}"
+}
+
 help_cmd() {
     echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
     echo
     echo -e "${yellow}Usage:${reset}"
-    echo "  port add <http|tcp> <local_port>        Add a new HTTP or TCP port forwarding"
-    echo "  port remove <local_port>                Remove an existing port forwarding"
-    echo "  port refresh                            Restart all active tunnels"
-    echo "  port list                               List all active port mappings"
-    echo "  port service {start|stop|restart|status} Manage the service manually"
-    echo "  port help                               Display this help message"
+    echo "  port add <http|tcp> <local_port> [subdomain]  Add a new HTTP or TCP port forwarding"
+    echo "  port remove <local_port>                     Remove an existing port forwarding"
+    echo "  port refresh                                 Restart all active tunnels"
+    echo "  port list                                    List all active port mappings"
+    echo "  port service {start|stop|restart|status}    Manage the service manually"
+    echo "  port update                                  Update the script from GitHub"
+    echo "  port help                                    Display this help message"
     echo
     echo -e "${yellow}Examples:${reset}"
-    echo "  port add http 80                        Add an HTTP tunnel for local port 80"
-    echo "  port add tcp 25565                      Add a TCP tunnel for local port 25565"
-    echo "  port remove 80                          Remove the tunnel for local port 80"
-    echo "  port list                               View active tunnels"
-    echo "  port refresh                            Restart all tunnels after a reboot"
+    echo "  port add http 80 myapp                       Add an HTTP tunnel for local port 80 with subdomain 'myapp'"
+    echo "  port add tcp 25565                           Add a TCP tunnel for local port 25565"
+    echo "  port remove 80                               Remove the tunnel for local port 80"
+    echo "  port list                                    View active tunnels"
+    echo "  port refresh                                 Restart all tunnels after a reboot"
+    echo "  port update                                  Fetch the latest version of the script"
     echo
-    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
-}
-
-# Main Command Handler
-check_dependencies
-
-# Ensure only one instance runs at a time
-exec 200>$LOCK_FILE
-flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
-
-case "$1" in
-    add)
-        add_port "$2" "$3"
-        ;;
-    remove)
-        remove_port "$2"
-        ;;
-    refresh)
-        refresh_ports
-        ;;
-    list)
-        list_ports
-        ;;
-    service)
-        manual_service "$2"
-        ;;
-    help)
-        help_cmd
-        ;;
-    *)
-        echo -e "${red}Invalid command. Use 'port help' for usage.${reset}"
-        exit 1
-        ;;
-esac
+    echo -e "Visit ${green}https://github.com/DevX-77/
