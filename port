@@ -24,9 +24,32 @@ serveo_status() {
 }
 
 check_dependencies() {
-    for cmd in ssh curl grep sed touch; do
-        command -v $cmd > /dev/null || { echo -e "${red}Error: $cmd is required but not installed.${reset}"; exit 1; }
+    # List of required commands
+    local required_cmds=("ssh" "curl" "grep" "sed" "touch" "nslookup")
+    
+    for cmd in "${required_cmds[@]}"; do
+        command -v $cmd > /dev/null || { 
+            echo -e "${red}Error: $cmd is required but not installed.${reset}"
+            install_dependencies "$cmd"
+        }
     done
+}
+
+# Install missing dependencies
+install_dependencies() {
+    local cmd=$1
+    echo -e "${yellow}Attempting to install $cmd...${reset}"
+
+    if command -v apt-get > /dev/null; then
+        sudo apt-get install -y $cmd
+    elif command -v yum > /dev/null; then
+        sudo yum install -y $cmd
+    elif command -v pacman > /dev/null; then
+        sudo pacman -S --noconfirm $cmd
+    else
+        echo -e "${red}Unsupported package manager. Please install $cmd manually.${reset}"
+        exit 1
+    fi
 }
 
 # Port Management Functions
@@ -113,7 +136,7 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(dig +short serveo.net | head -n 1) # Resolve Serveo's IP address
+    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
         random_port=$(echo $line | cut -d':' -f1)
