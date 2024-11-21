@@ -1,12 +1,13 @@
 #!/bin/bash
 
+# Trap signals to ensure cleanup
 trap 'kill ${tunnel_pid:-} ${http_pid:-} ${tcp_pid:-} ${ssh_pid:-} ${req_pid:-} 2>/dev/null; exit' SIGINT SIGTERM
 
 PORTS_FILE="/root/ports.info.txt"
 LOG_FILE="/var/log/port.log"
 LOCK_FILE="/var/lock/port.lock"
 
-# Colors for better visibility
+# Colors for visibility
 red="\033[0;31m"
 green="\033[0;32m"
 yellow="\033[0;33m"
@@ -16,28 +17,28 @@ reset="\033[0m"
 exec 200>$LOCK_FILE
 flock -n 200 || { echo -e "${red}Another instance is running.${reset}"; exit 1; }
 
-# Install missing dependencies if not already installed
+# Install dependencies
 install_dependencies() {
     local missing=()
-    for cmd in ssh curl grep sed touch nslookup; do
-        if ! command -v $cmd &> /dev/null; then
+    for cmd in ssh curl grep sed touch dig; do
+        if ! command -v "$cmd" &> /dev/null; then
             missing+=($cmd)
         fi
     done
 
     if [ ${#missing[@]} -gt 0 ]; then
-        echo -e "${yellow}Missing dependencies: ${missing[@]}. Installing...${reset}"
+        echo -e "${yellow}Missing dependencies: ${missing[*]}. Installing...${reset}"
 
-        # Install dependencies using the system's package manager
+        # Install dependencies using the appropriate package manager
         if [[ -n "$(command -v apt-get)" ]]; then
             sudo apt-get update
-            sudo apt-get install -y ${missing[@]}
+            sudo apt-get install -y ssh curl grep sed coreutils dnsutils
         elif [[ -n "$(command -v yum)" ]]; then
-            sudo yum install -y ${missing[@]}
+            sudo yum install -y openssh-clients curl grep sed coreutils bind-utils
         elif [[ -n "$(command -v pacman)" ]]; then
-            sudo pacman -S --noconfirm ${missing[@]}
+            sudo pacman -S --noconfirm openssh curl grep sed coreutils bind
         else
-            echo -e "${red}Unable to install dependencies. Please install them manually.${reset}"
+            echo -e "${red}Unsupported package manager. Please install the missing dependencies manually.${reset}"
             exit 1
         fi
     fi
@@ -61,7 +62,7 @@ check_dependencies() {
 # Port Management Functions
 validate_input() {
     local port=$1
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
         echo -e "${red}Invalid port number. Please provide a port between 1 and 65535.${reset}"
         exit 1
     fi
@@ -78,12 +79,10 @@ add_port() {
     fi
 
     local random_port=$(shuf -i 1024-65535 -n 1)
-    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
+    local serveo_ip=$(dig +short serveo.net | tail -n 1)
 
     ssh_command="ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net"
-    if [[ "$protocol" == "http" ]]; then
-        ssh_command+=" -R 80:localhost:${local_port}"
-    fi
+    [[ "$protocol" == "http" ]] && ssh_command+=" -R 80:localhost:${local_port}"
 
     eval $ssh_command > /dev/null 2>&1 &
     ssh_pid=$!
@@ -104,7 +103,7 @@ remove_port() {
     fi
 
     local port_info
-    port_info=$(grep ":${local_port}:" $PORTS_FILE)
+    port_info=$(grep ":${local_port}:" "$PORTS_FILE")
 
     if [[ -z "$port_info" ]]; then
         echo -e "${red}Port ${local_port} not found.${reset}"
@@ -112,10 +111,10 @@ remove_port() {
     fi
 
     local ssh_pid
-    ssh_pid=$(echo $port_info | cut -d':' -f3)
+    ssh_pid=$(echo "$port_info" | cut -d':' -f3)
 
     kill "$ssh_pid" > /dev/null 2>&1
-    sed -i "/${port_info}/d" $PORTS_FILE
+    sed -i "/${port_info}/d" "$PORTS_FILE"
 
     echo -e "${green}Port ${local_port} has been removed.${reset}"
 }
@@ -127,11 +126,12 @@ refresh_ports() {
     fi
 
     while IFS= read -r line; do
-        random_port=$(echo $line | cut -d':' -f1)
-        local_port=$(echo $line | cut -d':' -f2)
+        local random_port local_port
+        random_port=$(echo "$line" | cut -d':' -f1)
+        local_port=$(echo "$line" | cut -d':' -f2)
 
-        ssh -o StrictHostKeyChecking=no -f -N -R ${random_port}:localhost:${local_port} serveo.net > /dev/null 2>&1 &
-    done < $PORTS_FILE
+        ssh -o StrictHostKeyChecking=no -f -N -R "${random_port}:localhost:${local_port}" serveo.net > /dev/null 2>&1 &
+    done < "$PORTS_FILE"
 
     echo -e "${green}Ports have been successfully refreshed.${reset}"
 }
@@ -142,21 +142,22 @@ list_ports() {
         exit 1
     fi
 
-    local serveo_ip=$(nslookup serveo.net | grep 'Address' | tail -n 1 | awk '{print $2}') # Resolve Serveo's IP address
+    local serveo_ip=$(dig +short serveo.net | tail -n 1)
     echo -e "${green}Current port mappings:${reset}"
     while IFS= read -r line; do
-        random_port=$(echo $line | cut -d':' -f1)
-        local_port=$(echo $line | cut -d':' -f2)
+        local random_port local_port
+        random_port=$(echo "$line" | cut -d':' -f1)
+        local_port=$(echo "$line" | cut -d':' -f2)
         echo -e "${green}Local port ${local_port} ->"
         echo -e "  - IP: ${serveo_ip}:${random_port}${reset}"
-    done < $PORTS_FILE
+    done < "$PORTS_FILE"
 }
 
 manual_service() {
     case "$1" in
         start)
             echo "Starting port management tool..."
-            nohup $0 refresh > $LOG_FILE 2>&1 &
+            nohup "$0" refresh > "$LOG_FILE" 2>&1 &
             echo $! > /var/run/port.pid
             echo "Service started."
             ;;
@@ -192,7 +193,6 @@ manual_service() {
     esac
 }
 
-# Improved Help Command
 help_cmd() {
     echo -e "${green}Port Management Tool - Simplify your port forwarding with Serveo${reset}"
     echo
@@ -204,14 +204,6 @@ help_cmd() {
     echo "  port service {start|stop|restart|status} Manage the service manually"
     echo "  port help                               Display this help message"
     echo
-    echo -e "${yellow}Examples:${reset}"
-    echo "  port add http 80                        Add an HTTP tunnel for local port 80"
-    echo "  port add tcp 25565                      Add a TCP tunnel for local port 25565"
-    echo "  port remove 80                          Remove the tunnel for local port 80"
-    echo "  port list                               View active tunnels"
-    echo "  port refresh                            Restart all tunnels after a reboot"
-    echo
-    echo -e "Visit ${green}https://github.com/DevX-77/port${reset} for more information."
 }
 
 # Main Command Handler
@@ -236,3 +228,8 @@ case "$1" in
     help)
         help_cmd
         ;;
+    *)
+        echo -e "${red}Invalid command. Use 'help' for usage instructions.${reset}"
+        exit 1
+        ;;
+esac
