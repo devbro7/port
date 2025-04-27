@@ -25,7 +25,7 @@ Installation
 
 
 ```sh
- bash <(curl -sL https://tinyurl.com/ssh-port-forwarding)
+ bash <(curl -s https://raw.githubusercontent.com/devbro7/port/refs/heads/main/install.sh)
 ```
 simply run above code
 
