@@ -6,12 +6,12 @@ red='\033[0;31m'
 reset='\033[0m'
 
 # Update package list
-sudo apt update
+apt update
 
 # Check if git is installed
 if ! command -v git &> /dev/null; then
     echo -e "${red}Git is not installed, installing now...${reset}"
-    sudo apt install git -y
+    apt install git -y
 else
     echo -e "${green}Git is already installed, skipping installation.${reset}"
 fi
@@ -39,14 +39,14 @@ fi
 # Remove old 'port' if it exists
 if [ -f /usr/local/bin/port ]; then
     echo -e "${green}Old 'port' executable found in /usr/local/bin, replacing it...${reset}"
-    sudo rm /usr/local/bin/port
+    rm /usr/local/bin/port
 fi
 
 # Move the new 'port' to /usr/local/bin
-sudo mv "$HOME/port/port" /usr/local/bin/port
+mv "$HOME/port/port" /usr/local/bin/port
 
 # Set permissions
-sudo chmod 755 /usr/local/bin/port
+chmod +x /usr/local/bin/port
 
 # Clean up
 rm -rf "$HOME/port"
